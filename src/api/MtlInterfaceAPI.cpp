@@ -199,7 +199,7 @@ class MtlInterface
         float rewrite(bool allow_zero_gain, bool use_dont_cares, bool preserve_depth, IndexType min_cut_size);
         /// @brief Perform refactoring on the MIG
         /// @return the time taken to perform refactoring
-        float refactor(bool allow_zero_gain, bool use_dont_cares);
+        float refactor(bool allow_zero_gain, bool use_dont_cares, IndexType max_pis);
         /// @brief Perform resubstitution on the MIG
         /// @return the time taken to perform resubstitution
         float resub(IndexType max_pis, IndexType max_inserts, bool use_dont_cares, IndexType window_size, bool preserve_depth);
@@ -265,8 +265,14 @@ float MtlInterface::read_aig(const std::string &filename)
     auto beginClk = clock();
     char Command[1000];
     // read the file
+    std::cout << "Read file.\n";
     sprintf( Command, "%s", filename.c_str() );
-    lorina::read_aiger(Command, mockturtle::aiger_reader( _mig ) );
+    auto const res = lorina::read_aiger(Command, mockturtle::aiger_reader( _mig ) );
+    if ( res != lorina::return_code::success)
+    {
+    std::cout << "Read benchmark failed\n";
+    return -1;
+    }
     auto endClk = clock();
     _lastClk = endClk - beginClk;
     this->updateGraph();
@@ -336,15 +342,17 @@ float MtlInterface::rewrite(bool allow_zero_gain, bool use_dont_cares, bool pres
     return mockturtle::to_seconds(st.time_total);
 }
 
-float MtlInterface::refactor(bool allow_zero_gain, bool use_dont_cares){
+float MtlInterface::refactor(bool allow_zero_gain, bool use_dont_cares, IndexType max_pis){
     if(!_interface){
         return -1.0;
     }
-    mockturtle::akers_resynthesis<mockturtle::mig_network> resyn;
+    //mockturtle::akers_resynthesis<mockturtle::mig_network> resyn;
+    mockturtle::mig_npn_resynthesis resyn;
     mockturtle::refactoring_params ps;
     mockturtle::refactoring_stats st;
     ps.allow_zero_gain = allow_zero_gain;
     ps.use_dont_cares = use_dont_cares;
+    ps.max_pis = max_pis;
     std::cout << "Reached refactoring part.\n";
     mockturtle::refactoring( _mig, resyn, ps, &st);
     std::cout << "Finished refactoring.\n";
@@ -363,10 +371,14 @@ float MtlInterface::resub(IndexType max_pis, IndexType max_inserts, bool use_don
     ps.use_dont_cares = use_dont_cares;
     ps.window_size = window_size;
     ps.preserve_depth = preserve_depth;
-    mockturtle::depth_view _depth_mig{ _mig }; 
-    mockturtle::fanout_view _fanout_mig{ _depth_mig };
-    std::cout << "Reached resubstitution part.\n";
-    mockturtle::mig_resubstitution( _fanout_mig, ps, &st );
+    // mockturtle::depth_view _depth_mig{ _mig }; 
+    // mockturtle::fanout_view _fanout_mig{ _depth_mig };
+    using view_t = mockturtle::depth_view<mockturtle::fanout_view<mockturtle::mig_network>>;
+    mockturtle::fanout_view _fanout_mig{_mig};
+    view_t resub_view{_fanout_mig};
+    mockturtle::mig_resubstitution( resub_view );
+    std::cout << "Reached MIG resubstitution part.\n";
+    mockturtle::mig_resubstitution( resub_view, ps, &st );
     std::cout << "Finished resubstitution.\n";
     _mig = mockturtle::cleanup_dangling( _mig );
     return mockturtle::to_seconds(st.time_total);
@@ -375,8 +387,8 @@ float MtlInterface::resub(IndexType max_pis, IndexType max_inserts, bool use_don
 void MtlInterface::updateGraph()
 {
     _numMigNodes = _mig.size();
-    mockturtle::depth_view mig_depth{ _mig };
-    _depth = mig_depth.depth();
+    //mockturtle::depth_view mig_depth{ _mig };
+    //_depth = mig_depth.depth();
     _numPO = _mig.num_pos();
     _numPI = _mig.num_pis();
     _numConst = 0;
@@ -469,10 +481,10 @@ void initMtlInterfaceAPI(py::module &m)
                 py::arg("allow_zero_gain") = false, py::arg("use_dont_cares") = false,
                 py::arg("preserve_depth") = false, py::arg("min_cut_size") = 3u)
         .def("resub", &PROJECT_NAMESPACE::MtlInterface::resub, "resub action",
-                py::arg("max_pis") = 8u, py::arg("max_inserts") = 2u, py::arg("use_dont_cares") = false,
+                py::arg("max_pis") = 4u, py::arg("max_inserts") = 2u, py::arg("use_dont_cares") = false,
                 py::arg("window_size") = 12u, py::arg("preserve_depth") = false)
         .def("refactor", &PROJECT_NAMESPACE::MtlInterface::refactor, "refactor action",
-                py::arg("allow_zero_gain") = false, py::arg("use_dont_cares") = false);
+                py::arg("max_pis") = 4u, py::arg("allow_zero_gain") = false, py::arg("use_dont_cares") = false);
 
     py::class_<PROJECT_NAMESPACE::MigStats>(m , "MigStats")
         .def(py::init<>())
